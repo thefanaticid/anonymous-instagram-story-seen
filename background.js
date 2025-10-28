@@ -1,26 +1,49 @@
+// Initialize state
 let isActive = false;
-chrome.browserAction.setBadgeBackgroundColor({ color: isActive ? '#0097ff' : '#777' });
-chrome.browserAction.setBadgeText({
-	text: isActive ? 'On' : 'Off'
+
+// Initialize badge on startup
+chrome.action.setBadgeBackgroundColor({ color: isActive ? '#0097ff' : '#777' });
+chrome.action.setBadgeText({ text: isActive ? 'On' : 'Off' });
+
+// Load saved state from storage
+chrome.storage.local.get(['isActive'], (result) => {
+	if (result.isActive !== undefined) {
+		isActive = result.isActive;
+	}
+	updateBadge();
 });
 
-chrome.webRequest.onBeforeRequest.addListener(
-	function (details) {
-		const {requestBody : { formData }  } = details ;
+function updateBadge() {
+	chrome.action.setBadgeBackgroundColor({ color: isActive ? '#0097ff' : '#777' });
+	chrome.action.setBadgeText({ text: isActive ? 'On' : 'Off' });
+}
 
-		const variables = JSON.parse(formData.variables[0])
-		const statusBlocking = `${formData.fb_api_req_friendly_name}`.includes('Seen') && `${formData.fb_api_req_friendly_name}`.includes('Polaris') && `${formData.fb_api_req_friendly_name}`.includes('Mutation') && 'viewSeenAt' in variables ;
-
-		return { cancel: (isActive && statusBlocking) }
-	},
-	{ urls: [ '*://*.instagram.com/api/v1/stories/reel/seen*', '*://*.instagram.com/api/graphql*', '*://*.instagram.com/graphql/query*' ] },
-	[ 'blocking', 'requestBody']
-);
-
-chrome.browserAction.onClicked.addListener(() => {
+// Handle extension icon click
+chrome.action.onClicked.addListener(async () => {
 	isActive = !isActive;
-	chrome.browserAction.setBadgeBackgroundColor({ color: isActive ? '#0097ff' : '#777' });
-	chrome.browserAction.setBadgeText({
-		text: isActive ? 'On' : 'Off'
+
+	// Save state
+	await chrome.storage.local.set({ isActive: isActive });
+
+	// Update badge
+	updateBadge();
+
+	// Notify all Instagram tabs about the state change
+	const tabs = await chrome.tabs.query({ url: 'https://*.instagram.com/*' });
+	tabs.forEach(tab => {
+		chrome.tabs.sendMessage(tab.id, {
+			action: 'toggleState',
+			isActive: isActive
+		}).catch(() => {
+			// Ignore errors for tabs where content script isn't loaded yet
+		});
 	});
+});
+
+// Handle messages from content script
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+	if (request.action === 'getState') {
+		sendResponse({ isActive: isActive });
+		return true;
+	}
 });
